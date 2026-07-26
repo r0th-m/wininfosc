@@ -23,6 +23,15 @@ if '%errorlevel%' NEQ '0' (
 :: 开启延迟变量扩展，供后续for循环中errorlevel判断使用
 setlocal enabledelayedexpansion
 
+:: ============================================================
+:: 采集端足迹自报告：记录采集过程执行的关键外部命令（时间<TAB>命令行，本地时间）
+:: 供分析端 collector footprint 标注优先消费；先写 bat 同目录，建好输出目录后移入（与 _HASH_MANIFEST.txt 同级）
+:: certutil 批量固证属固证动作非排查命令，只记一条汇总（明细见 _HASH_MANIFEST.txt），不逐条记录
+:: ============================================================
+set "FPLOG=%~dp0_COLLECT_FOOTPRINT.txt"
+> "%FPLOG%" echo WinInfoSC Collector Footprint v1.0 - 采集端执行命令自报告
+>> "%FPLOG%" echo Format: YYYY-MM-DD HH:MM:SS [TAB] CommandLine
+
 echo.
 echo [*] Start gathering info,please wait......
 echo.
@@ -41,9 +50,11 @@ if defined PROCESSOR_ARCHITEW6432 set "EVERYTHING_EXE=Everything-x64.exe"
 if exist "%~dp0es.exe" (
     if exist "%~dp0%EVERYTHING_EXE%" (
         echo [*] Everything: building portable index [instance=Forensic], please wait...
+        call :fp "%EVERYTHING_EXE% -instance Forensic （建立便携索引）"
         start "" "%~dp0%EVERYTHING_EXE%" -instance Forensic
         :: 等命名实例启动+建索引就绪(否则 es.exe 报 Error 8: IPC window not found)
         ping -n 12 127.0.0.1 >nul 2>&1
+        call :fp "es.exe -instance Forensic -export-efu everything.efu"
         "%~dp0es.exe" -instance Forensic -timeout 120000 -export-efu "%~dp0everything.efu" || set "ES_FAILED=1"
         "%~dp0%EVERYTHING_EXE%" -instance Forensic -exit >nul 2>&1
         :: 采完删掉 Everything 生成的库/配置(补回"减留痕")
@@ -79,6 +90,11 @@ if exist "%~dp0everything.efu" move "%~dp0everything.efu" "%NEWNAME%"
 
 cd "%NEWNAME%"
 
+:: 足迹文件移入采集输出目录（与 _HASH_MANIFEST.txt 同级），并补写主机头
+move /y "%~dp0_COLLECT_FOOTPRINT.txt" "%CD%\_COLLECT_FOOTPRINT.txt" >nul 2>&1
+set "FPLOG=%CD%\_COLLECT_FOOTPRINT.txt"
+>> "%FPLOG%" echo Host=%NAME% IP=%IP% Generated=%DATE% %TIME%
+
 :: ============================================================
 :: 失败命令日志：记录主干命令异常退出（缺工具 / not recognized / 权限不足 / 系统错误）
 :: 仅记"本该成功却失败"的确定性命令；目录拷贝类(xcopy/robocopy)源不存在属常态，不在此列。
@@ -94,17 +110,31 @@ if defined ES_FAILED >> "%FAILLOG%" echo [%TIME%] FAIL es.exe (everything.efu ex
 :: 进程/网络连接/会话/缓存/USN 随时间或关机即变,必须在磁盘 artifact 前最先采
 :: ============================================================
 > _COLLECTION_TIME.txt echo WinInfoSC Collection Started: %DATE% %TIME%
+call :fp "w32tm /tz"
 w32tm /tz >> _COLLECTION_TIME.txt 2>nul
+:: w32tm /tz 在无夏令时规则的时区会报 TIME_ZONE_ID_UNKNOWN，补 tzutil /g 输出规范时区名（如 China Standard Time）
+call :fp "tzutil /g"
+for /f "delims=" %%Z in ('tzutil /g 2^>nul') do >> _COLLECTION_TIME.txt echo tzutil /g: %%Z
+call :fp "tasklist /V /FO CSV"
 tasklist /V /FO CSV > tasklist_process.csv || call :fail "tasklist /V"
+call :fp "tasklist /SVC /FO CSV"
 tasklist /SVC /FO CSV > tasklist_services.csv || call :fail "tasklist /SVC"
+call :fp "netstat -abon"
 netstat -abon >> netstat.txt || call :fail "netstat -abon"
+call :fp "netstat -aon | FIND 'ESTABLISHED'"
 netstat -aon | FIND "ESTABLISHED" > netstat_established.txt
+call :fp "ipconfig /displaydns"
 ipconfig /displaydns > dns_cache.txt || call :fail "ipconfig /displaydns"
+call :fp "arp -a"
 arp -a > arp_a.txt || call :fail "arp -a"
+call :fp "nbtstat -S"
 nbtstat -S > nbtstat_cache.txt || call :fail "nbtstat -S"
+call :fp "net session"
 net session > net_session.txt || call :fail "net session"
+call :fp "net use"
 net use > net_use.txt || call :fail "net use"
 :: USN 变更日志(文件系统增删改流水,含已删文件痕迹) —— 亦属易失
+call :fp "fsutil usn readjournal C: csv"
 fsutil usn readjournal C: csv > usn_journal_C.csv 2>nul
 :: ============================================================
 :: $MFT 主文件表(全盘文件元数据+时间戳,含已删文件) —— 需 RawCopy(裸磁盘读)
@@ -115,6 +145,7 @@ if exist "%~dp0RawCopy64.exe" set "RAWCOPY_EXE=RawCopy64.exe"
 if not defined RAWCOPY_EXE if exist "%~dp0RawCopy.exe" set "RAWCOPY_EXE=RawCopy.exe"
 if defined RAWCOPY_EXE (
     echo [*] Acquiring $MFT via %RAWCOPY_EXE% ^(may take a while^)...
+    call :fp "%RAWCOPY_EXE% /FileNamePath:C:0 （采集 $MFT）"
     "%~dp0%RAWCOPY_EXE%" /FileNamePath:C:0 /OutputPath:. /OutputName:MFT.bin >nul 2>&1
 ) else (
     echo [!] Skip $MFT ^(no RawCopy.exe, optional^)
@@ -138,57 +169,83 @@ xcopy /e/h/c/i  %SYSTEMROOT%\Prefetch\*.pf  .\Prefetch
 :: ============================================================
 :: 注册表采集 - 原有项
 :: ============================================================
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache' REG_Shimcache.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" REG_Shimcache.txt || call :fail "reg Shimcache"
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist' REG_UserAssit.txt"
 reg export  "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist" REG_UserAssit.txt || call :fail "reg UserAssist"
+call :fp "reg export  'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'  REG_IFEO.txt"
 reg export  "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"  REG_IFEO.txt || call :fail "reg IFEO"
+call :fp "reg export  'HKLM\Software\Microsoft\Windows\CurrentVersion\Run'  REG_CurrentVersionRun.txt"
 reg export  "HKLM\Software\Microsoft\Windows\CurrentVersion\Run"  REG_CurrentVersionRun.txt || call :fail "reg HKLM Run"
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects'  REG_BHO.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects"  REG_BHO.txt || call :fail "reg BHO"
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ShellExecuteHooks'   REG_ShellExecuteHooks.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ShellExecuteHooks"   REG_ShellExecuteHooks.txt || call :fail "reg ShellExecuteHooks"
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Services'  REG_CurrentControlSet_Services.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Services"  REG_CurrentControlSet_Services.txt || call :fail "reg Services"
+call :fp "reg export  'HKLM\SYSTEM\ControlSet001\Services'  REG_ControlSet001_Services.txt"
 reg export  "HKLM\SYSTEM\ControlSet001\Services"  REG_ControlSet001_Services.txt || call :fail "reg ControlSet001 Services"
+call :fp "reg export  'HKLM\SYSTEM\ControlSet002\Services'  REG_ControlSet002_Services.txt"
 reg export  "HKLM\SYSTEM\ControlSet002\Services"  REG_ControlSet002_Services.txt || call :fail "reg ControlSet002 Services"
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU' REG_RunMRU.txt"
 reg export  "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" REG_RunMRU.txt || call :fail "reg RunMRU"
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs' REG_RecentDocs.txt"
 reg export  "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs" REG_RecentDocs.txt || call :fail "reg RecentDocs"
 
 :: ============================================================
 :: 注册表采集 - 新增：持久化机制
 :: ============================================================
 :: Winlogon - Shell/Userinit劫持
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'  REG_Winlogon.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"  REG_Winlogon.txt 2>nul
 :: AppInit_DLLs - 加载每个user-mode进程的DLL
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows'  REG_AppInitDLLs.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows"  REG_AppInitDLLs.txt 2>nul
 :: BootExecute - 开机最早执行阶段
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager'  REG_SessionManager.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager"  REG_SessionManager.txt 2>nul
 :: LSA - SSP注入、WDigest明文凭据开关
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Control\Lsa'  REG_LSA.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Control\Lsa"  REG_LSA.txt 2>nul
 :: COM劫持 - HKCU优先于HKLM加载，无需管理员权限
+call :fp "reg export  'HKCU\Software\Classes\CLSID'  REG_COM_Hijack_HKCU.txt"
 reg export  "HKCU\Software\Classes\CLSID"  REG_COM_Hijack_HKCU.txt 2>nul
 :: 用户级Run键
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\CurrentVersion\Run'  REG_HKCU_Run.txt"
 reg export  "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"  REG_HKCU_Run.txt 2>nul
 
 :: ============================================================
 :: 注册表采集 - 新增：USB设备接入历史
 :: ============================================================
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Enum\USBSTOR'  REG_USBSTOR.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Enum\USBSTOR"  REG_USBSTOR.txt 2>nul
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Enum\USB'  REG_USB.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Enum\USB"  REG_USB.txt 2>nul
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2'  REG_MountPoints2.txt"
 reg export  "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2"  REG_MountPoints2.txt 2>nul
 
 :: ============================================================
 :: 注册表采集 - 新增：RDP客户端历史
 :: ============================================================
+call :fp "reg export  'HKCU\Software\Microsoft\Terminal Server Client\Servers'  REG_RDPServers.txt"
 reg export  "HKCU\Software\Microsoft\Terminal Server Client\Servers"  REG_RDPServers.txt 2>nul
+call :fp "reg export  'HKCU\Software\Microsoft\Terminal Server Client\Default'   REG_RDPDefault.txt"
 reg export  "HKCU\Software\Microsoft\Terminal Server Client\Default"   REG_RDPDefault.txt 2>nul
 
 :: ============================================================
 :: 注册表采集 - 新增：网络历史
 :: ============================================================
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'    REG_NetworkProfiles.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"    REG_NetworkProfiles.txt 2>nul
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Signatures'  REG_NetworkSignatures.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Signatures"  REG_NetworkSignatures.txt 2>nul
 
 :: ============================================================
 :: 注册表采集 - 新增：Windows Defender排除项（攻击者常写入白名单）
 :: ============================================================
+call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions'  REG_DefenderExclusions.txt"
 reg export  "HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions"  REG_DefenderExclusions.txt 2>nul
+call :fp "reg export  'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender'     REG_DefenderPolicy.txt"
 reg export  "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender"     REG_DefenderPolicy.txt 2>nul
 
 md Windows_logs
@@ -205,6 +262,7 @@ if "%b%" == "5" (
 copy /y %SYSTEMROOT%\System32\config\*.evt  .\Windows_logs\
 md Recent
 xcopy /e/h/c/i "%USERPROFILE%\Recent" .\Recent
+call :fp "reg export  'HKCU\Software\Microsoft\Windows\ShellNoRoam\MUICache' REG_MuiCache.txt"
 reg export  "HKCU\Software\Microsoft\Windows\ShellNoRoam\MUICache" REG_MuiCache.txt
 goto :MoreInfo
 
@@ -229,8 +287,10 @@ xcopy /e/h/c/i C:\Windows\System32\SleepStudy\ScreenOn\ .\ScreenOn
 xcopy /e/h/c/i %SYSTEMROOT%\TEMP .\Temp
 md Recent
 xcopy /e/h/c/i "%APPDATA%\Microsoft\Windows\Recent"  .\Recent\
+call :fp "reg export  'HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache' REG_MuiCache.txt"
 reg export  "HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache" REG_MuiCache.txt
 ::win10 only
+call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings' REG_UserSettings.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings" REG_UserSettings.txt
 ::Amcache.hve 常被系统占用 → robocopy 备份模式绕锁（与其它 hive 取法一致）
 robocopy "%SYSTEMROOT%\AppCompat\Programs" . Amcache.hve /B /COPY:DAT /R:0 /W:0 >nul 2>&1
@@ -280,7 +340,9 @@ xcopy /e/h/c/i "C:\ProgramData\ssh" .\SSH\Global\ >nul 2>&1
 :: ============================================================
 robocopy "%LOCALAPPDATA%\CoreAIPlatform.00\UKP" .\Recall_CurrentUser /E /B /COPY:DAT /R:0 /W:0 >nul 2>&1
 :: Recall 开关/策略注册表(WindowsAI)
+call :fp "reg export 'HKCU\Software\Policies\Microsoft\Windows\WindowsAI' REG_Recall_WindowsAI_HKCU.txt"
 reg export "HKCU\Software\Policies\Microsoft\Windows\WindowsAI" REG_Recall_WindowsAI_HKCU.txt 2>nul
+call :fp "reg export 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' REG_Recall_WindowsAI_HKLM.txt"
 reg export "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI" REG_Recall_WindowsAI_HKLM.txt 2>nul
 
 :: ============================================================
@@ -301,19 +363,31 @@ echo [*] Gathering info...please wait several seconds :)
 echo.
 
 copy /y %SYSTEMROOT%\System32\drivers\etc\hosts .\hosts.txt || call :fail "copy hosts"
+call :fp "ipconfig /all"
 ipconfig /all  > ipconfig.txt || call :fail "ipconfig /all"
+call :fp "systeminfo"
 systeminfo > systeminfo.txt || call :fail "systeminfo"
+call :fp "net share"
 net share > net_share.txt || call :fail "net share"
+call :fp "net user"
 net user > net_user.txt || call :fail "net user"
+call :fp "net user Administrator"
 net user Administrator >net_user_Administrator.txt || call :fail "net user Administrator"
 ::如非域环境net view过于影响脚本性能，默认注释。
 ::net view > net_view.txt
+call :fp "cmdkey /l"
 cmdkey /l >cmdkey.txt || call :fail "cmdkey /l"
+call :fp "netsh advfirewall firewall show rule name=all"
 netsh advfirewall firewall show rule name=all >netsh_firewall_all.txt || call :fail "netsh firewall rules"
+call :fp "netsh interface portproxy show all"
 netsh interface portproxy show all >netsh_portproxy_all.txt || call :fail "netsh portproxy"
+call :fp "route print"
 route print >route_print.txt || call :fail "route print"
+call :fp "net localgroup"
 net localgroup > net_localgroup.txt || call :fail "net localgroup"
+call :fp "net localgroup administrators"
 net localgroup administrators > net_localgroup_admin.txt || call :fail "net localgroup administrators"
+call :fp "regedit /e .\regedit.reg"
 regedit /e .\regedit.reg || call :fail "regedit /e"
 dir /TC /AH %SYSTEMROOT%\System32 > dir_system32_hide.txt
 dir /tc /q /a %SYSTEMROOT%\Fonts | findstr /v /i "\.fon \.ttf \.ttc \.otf \. \.. \.CompositeFont desktop\.ini fms_metadata\.xml StaticCache\.dat" > dir_fonts.txt
@@ -322,7 +396,9 @@ dir /tc /q /a %SYSTEMROOT%\Fonts | findstr /v /i "\.fon \.ttf \.ttc \.otf \. \..
 :: 新增 - 网络补充
 :: ============================================================
 ::Wi-Fi历史及明文密码（netsh wlan export需要有无线网卡）
+call :fp "netsh wlan show profiles"
 netsh wlan show profiles > wifi_profiles.txt 2>nul
+call :fp "netsh wlan export profile folder=.\WiFiProfiles key=clear"
 netsh wlan export profile folder=.\WiFiProfiles key=clear >nul 2>&1
 
 ::防火墙日志文件（如已启用）
@@ -336,20 +412,27 @@ copy /y "%SystemRoot%\debug\netlogon.bak" .\netlogon.bak >nul 2>&1
 :: 新增 - 系统安全状态
 :: ============================================================
 ::审计策略（判断日志是否被提前关闭，取证结论的元证据）
+call :fp "auditpol /get /category:*"
 auditpol /get /category:* > auditpol.txt 2>nul
 
 ::凭据保险箱
+call :fp "vaultcmd /listcreds:'Windows Credentials' /all"
 vaultcmd /listcreds:"Windows Credentials" /all > vault_creds.txt 2>nul
+call :fp "vaultcmd /listcreds:'Web Credentials' /all"
 vaultcmd /listcreds:"Web Credentials" /all >> vault_creds.txt 2>nul
 
 ::驱动列表
+call :fp "driverquery /FO CSV /V"
 driverquery /FO CSV /V > driverquery.csv || call :fail "driverquery"
 
 ::VSS卷影副本枚举（判断攻击者是否已删除）
+call :fp "vssadmin list shadows"
 vssadmin list shadows > vss_shadows.txt 2>nul
+call :fp "vssadmin list shadowstorage"
 vssadmin list shadowstorage >> vss_shadows.txt 2>nul
 
 ::BITS后台传输作业（隐蔽下载/持久化）
+call :fp "bitsadmin /list /allusers /verbose"
 bitsadmin /list /allusers /verbose > bits_jobs.txt 2>nul
 
 ::回收站元数据（$I文件含原始路径和删除时间）
@@ -362,22 +445,31 @@ xcopy /e/h/c/i "%SystemRoot%\System32\LogFiles\W3SVC1" .\IIS_Logs\ >nul 2>&1
 :: 新增 - WMI持久化订阅（无文件后门核心手段，原生wmic可查）
 :: ============================================================
 md WMI_Subscription
+call :fp "wmic /namespace:\\root\subscription PATH __EventFilter GET * /format:list"
 wmic /namespace:\\root\subscription PATH __EventFilter GET * /format:list > .\WMI_Subscription\EventFilter.txt 2>nul
+call :fp "wmic /namespace:\\root\subscription PATH __EventConsumer GET * /format:list"
 wmic /namespace:\\root\subscription PATH __EventConsumer GET * /format:list > .\WMI_Subscription\EventConsumer.txt 2>nul
+call :fp "wmic /namespace:\\root\subscription PATH __FilterToConsumerBinding GET * /format:list"
 wmic /namespace:\\root\subscription PATH __FilterToConsumerBinding GET * /format:list > .\WMI_Subscription\FilterToConsumerBinding.txt 2>nul
 
 :: ============================================================
 :: 新增 - SRUM数据库原始文件（esentutl可绕过ESE锁定）
 :: ============================================================
+call :fp "esentutl /y '%SystemRoot%\System32\sru\SRUDB.dat' /d .\SRUDB.dat /o"
 esentutl /y "%SystemRoot%\System32\sru\SRUDB.dat" /d .\SRUDB.dat /o >nul 2>&1
 :: Windows 搜索索引数据库(ESE) - 搜索历史/文件与邮件索引元数据(esentutl 绕 ESE 锁)
+call :fp "esentutl /y '%ProgramData%\Microsoft\Search\Data\Applications\Windows\Windows.edb' /d .\Windows.edb /o"
 esentutl /y "%ProgramData%\Microsoft\Search\Data\Applications\Windows\Windows.edb" /d .\Windows.edb /o >nul 2>&1
 :: SOFTWARE hive二进制 - srum-dump -r 用于把AppID/网卡LUID反解为可读名
 :: 采集时只有一次机会，须与SRUDB.dat同采，否则SRUM解析降级为裸数字
+call :fp "reg save HKLM\SOFTWARE .\SOFTWARE /y"
 reg save HKLM\SOFTWARE .\SOFTWARE /y >nul 2>&1
 :: 传统四大 hive 二进制补齐(SAM=账户/哈希, SECURITY=LSA secrets, SYSTEM=服务/USB/网络)
+call :fp "reg save HKLM\SAM .\SAM /y"
 reg save HKLM\SAM .\SAM /y >nul 2>&1
+call :fp "reg save HKLM\SECURITY .\SECURITY /y"
 reg save HKLM\SECURITY .\SECURITY /y >nul 2>&1
+call :fp "reg save HKLM\SYSTEM .\SYSTEM /y"
 reg save HKLM\SYSTEM .\SYSTEM /y >nul 2>&1
 
 :: 判断Win7/2008系统
@@ -387,6 +479,7 @@ set b=%b:~0,3%
 if "%b%" == "6.1" (
 	goto :win7only
 ) else (
+	call :fp "schtasks /query /FO LIST /V"
 	schtasks /query /FO LIST /V > schtasks.txt || call :fail "schtasks /query"
 	goto :continue
 )
@@ -397,9 +490,11 @@ if "%b%" == "6.1" (
 for /f "tokens=2 delims=:" %%i in ('chcp') do set codepage=%%i
 if "%codepage%" NEQ " 437" (
 	chcp 437 >nul
+	call :fp "schtasks /query /FO LIST /V"
 	schtasks /query /FO LIST /V > schtasks.txt || call :fail "schtasks /query"
 	chcp %codepage% >nul
 ) else (
+	call :fp "schtasks /query /FO LIST /V"
 	schtasks /query /FO LIST /V > schtasks.txt || call :fail "schtasks /query"
 )
 
@@ -408,16 +503,42 @@ rem wmic job list full /format:hform > WMIC_jobs.html
 rem wmic qfe list > WMIC_Installed_KB.txt
 rem wmic product list full /format:hform > WMIC_InstalledSoftwareList.html
 rem wmic startup list full /format:hform > WMIC_startup.html
-wmic process list full /format:hform > WMIC_process.html || call :fail "wmic process"
+call :fp "wmic process list full /format:hform"
+wmic process list full /format:hform > WMIC_process.html 2>nul
+if errorlevel 1 (
+    :: wmic 不可用（新版 Windows 已弃用 wmic），用 tasklist 兜底采集进程视图
+    >> "%FAILLOG%" echo [%TIME%] FAIL wmic process - wmic 不可用，已用 tasklist 兜底，exit=!errorlevel!
+    call :fp "tasklist /V /FO LIST （wmic process 兜底）"
+    tasklist /V /FO LIST > tasklist_process.txt 2>nul
+)
 rem wmic service list full /format:hform > WMIC_services.html
-wmic useraccount list full /format:hform > WMIC_user.html || call :fail "wmic useraccount"
+call :fp "wmic useraccount list full /format:hform"
+wmic useraccount list full /format:hform > WMIC_user.html 2>nul
+if errorlevel 1 (
+    :: wmic 不可用；账户信息前面已由 net user 采集（net_user.txt），跳过兜底仅记录
+    >> "%FAILLOG%" echo [%TIME%] FAIL wmic useraccount - wmic 不可用，账户信息已由 net user 采集（net_user.txt），跳过兜底，exit=!errorlevel!
+)
 rem wmic sysaccount list full /format:hform > WMIC_sysaccount.html
 rem wmic group list full /format:hform > WMIC_group.html
-wmic logon list full /format:hform > WMIC_logonlog.html || call :fail "wmic logon"
+call :fp "wmic logon list full /format:hform"
+wmic logon list full /format:hform > WMIC_logonlog.html 2>nul
+if errorlevel 1 (
+    :: wmic 不可用，用 query user 兜底登录会话视图
+    >> "%FAILLOG%" echo [%TIME%] FAIL wmic logon - wmic 不可用，已用 query user 兜底，exit=!errorlevel!
+    call :fp "query user （wmic logon 兜底）"
+    query user > query_user_logon.txt 2>nul
+)
 rem wmic netlogin list full /format:hform > WMIC_netloginlog.html
 
 :: 新增wmic采集
-wmic qfe list > WMIC_hotfixes.txt || call :fail "wmic qfe"
+call :fp "wmic qfe list"
+wmic qfe list > WMIC_hotfixes.txt 2>nul
+if errorlevel 1 (
+    :: wmic 不可用，从已采集的 systeminfo.txt 提取修补程序列表兜底
+    >> "%FAILLOG%" echo [%TIME%] FAIL wmic qfe - wmic 不可用，已从 systeminfo.txt 提取修补程序兜底，exit=!errorlevel!
+    call :fp "findstr KB systeminfo.txt （wmic qfe 兜底）"
+    findstr /i "KB" systeminfo.txt > qfe_from_systeminfo.txt 2>nul
+)
 
 :: ============================================================
 :: 新增 - 多用户遍历（解决仅采集当前用户的问题）
@@ -495,6 +616,10 @@ set "MANIFEST=_HASH_MANIFEST.txt"
 > "%MANIFEST%" echo WinInfoSC Forensic Collection - SHA256 Manifest
 >> "%MANIFEST%" echo Host=%NAME% IP=%IP% Generated=%DATE% %TIME%
 >> "%MANIFEST%" echo ================================================
+:: 足迹：certutil 批量固证只记一条汇总（逐文件明细即本清单）
+set "FPCOUNT=0"
+for /r %%F in (*) do set /a FPCOUNT+=1
+call :fp "certutil -hashfile 批量固证 %FPCOUNT% 个文件 （逐文件SHA256明细见 _HASH_MANIFEST.txt）"
 for /r %%F in (*) do (
     if /I not "%%~nxF"=="%MANIFEST%" (
         for /f "delims=" %%H in ('certutil -hashfile "%%F" SHA256 ^| findstr /v ":"') do (
@@ -532,4 +657,17 @@ exit /b 0
 :: ============================================================
 :fail
 >> "%FAILLOG%" echo [%TIME%] FAIL (exit=%errorlevel%) %~1
+exit /b 0
+
+:: ============================================================
+:: 子程序：记录一条采集足迹（时间(YYYY-MM-DD HH:MM:SS)<TAB>命令行）
+:: 优先用 PowerShell 取标准时间格式；无 PowerShell 时退化为 %DATE% %TIME%
+:: 用 !FP_CMD! 延迟扩展输出，避免命令行中的 | 等字符被当成管道符
+:: ============================================================
+:fp
+set "FP_CMD=%~1"
+set "FP_TS=%DATE% %TIME:~0,8%"
+for /f "delims=" %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH:mm:ss" 2^>nul') do set "FP_TS=%%T"
+set "FP_TS=%FP_TS:_= %"
+>> "%FPLOG%" echo !FP_TS!	!FP_CMD!
 exit /b 0

@@ -172,6 +172,14 @@
 
 ## 八、更新记录
 
+### 2026-07-26 · 配套分析端:规范时区名、采集足迹自报告、wmic 弃用兜底
+
+**背景**:下游分析端在三处需要采集端配套——
+
+1. **`tzutil /g` 规范时区名** —— `_COLLECTION_TIME.txt` 里 `w32tm /tz` 在无夏令时规则的时区(如中国)会报 `TIME_ZONE_ID_UNKNOWN`,分析端拿不到规范时区名。现在追加一行 `tzutil /g: China Standard Time`。
+2. **`_COLLECT_FOOTPRINT.txt` 采集足迹自报告(新增,与 `_HASH_MANIFEST.txt` 同级)** —— 采集过程执行的关键外部命令(tasklist/netstat/ipconfig/arp/route/nbtstat/net/netsh/reg/schtasks/wmic/driverquery/auditpol/cmdkey/bitsadmin/systeminfo/w32tm/tzutil/es/Everything 等)逐条记录为 `YYYY-MM-DD HH:MM:SS<TAB>命令行`,供分析端 collector footprint 标注优先消费。certutil 批量固证属固证动作,只记一条汇总(含文件数),不逐条刷屏。时间戳优先用 PowerShell `Get-Date` 取标准格式,无 PowerShell 时退化为 `%DATE% %TIME%`。
+3. **wmic 弃用兜底** —— 新版 Windows 已移除 wmic,`wmic process/useraccount/logon/qfe` 失败(exit≠0)时自动兜底:进程 → `tasklist /V /FO LIST`(产出 `tasklist_process.txt`);账户 → 前面 `net user` 已采集,跳过仅记录;登录会话 → `query user`(`query_user_logon.txt`);补丁 → 从已采的 `systeminfo.txt` 提取 KB 行(`qfe_from_systeminfo.txt`)。兜底情况写入 `_COLLECT_ERRORS.log` 并注明「wmic 不可用,已用 XX 兜底」。
+
 ### 2026-07-23 · 修复 Everything 全盘清单导出失败(`Error 8: IPC window not found`)
 
 **现象**:采集跑到 Everything 那步报 `Error 8: Everything IPC window not found`,`everything.efu` 导不出来(部分环境还表现为"Everything 没弹出来")。
