@@ -57,11 +57,11 @@
 | **持久化机制** | 注册表 Run 键(HKLM/HKCU)、Winlogon、AppInit_DLLs、BootExecute、LSA、COM 劫持、IFEO、BHO、ShellExecuteHooks、Services(三套 ControlSet)、计划任务(`Tasks\` + `schtasks`)、启动目录、**WMI 事件订阅**(无文件后门核心) |
 | **执行痕迹** | Prefetch、**Amcache.hve**、BAM、ShimCache、UserAssist、MuiCache、RecentDocs、RunMRU、JumpList |
 | **日志** | Windows 事件日志(NT6 `.evtx` / NT5 `.evt`)、防火墙日志、Netlogon 日志、360/天擎日志、IIS 日志、ScreenOn |
-| **用户活动** | Recent、**Windows Timeline**(ActivitiesCache)、**PowerShell 历史**、浏览器(Chrome/Edge 的 History/Cookies/Login Data/Downloads、Firefox)、**ShellBags**(UsrClass.dat) |
+| **用户活动** | Recent、**Windows Timeline**(ActivitiesCache)、**PowerShell 历史**、浏览器(Chrome/Edge **全部 profile** 的 History/Cookies/Login Data/Downloads、Firefox、**IE WebCache**)、**ShellBags**(UsrClass.dat) |
 | **凭据与横向** | RDP(服务器历史 / 位图缓存 / `Default.rdp`)、**SSH 密钥**(用户 + 全局)、凭据保险箱(`vaultcmd`)、**Wi-Fi 明文密码**(`netsh wlan export key=clear`)、`cmdkey` |
 | **USB 与设备史** | USBSTOR、USB、MountPoints2 |
 | **反取证元证据** | **审计策略**(`auditpol`,判日志是否被提前关)、Windows Defender 排除项 / 检测历史 / 策略、**VSS 卷影副本**、BITS 后台作业、回收站元数据 |
-| **资源数据库** | **SRUM**(`SRUDB.dat`,近 30 天每程序网络收发字节)+ **Windows 搜索索引**(`Windows.edb`,搜索历史/文件与邮件索引元数据) |
+| **资源数据库** | **SRUM**(`SRUDB.dat`,近 30 天每程序网络收发字节)+ **Windows 搜索索引**(`Windows.edb`,搜索历史/文件与邮件索引元数据)+ **UAL**(`LogFiles\Sum\*.mdb`,用户访问日志:共享/会话访问账本,Server SKU 默认启用,客户端无此目录则跳过记注) |
 | **注册表 hive**(二进制) | 四大 hive:`SAM`(账户/密码哈希)、`SECURITY`(LSA secrets/缓存凭据)、`SYSTEM`(服务/USB/网络)、`SOFTWARE`(SRUM 反解 AppID/网卡) |
 | **Win11 Recall**(回顾) | `CoreAIPlatform` 回顾取证:**屏幕截图历史**(`ImageStore`)+ **活动数据库**(`ukg.db`,含 OCR 文本)+ 语义向量库(`*.sidb`)+ 开关注册表(Win11 24H2+) |
 | **文件系统时间线** | **`$UsnJrnl`**(USN 变更日志,文件增删改流水·含已删文件痕迹,`fsutil`)+ **`$MFT`**(主文件表,全盘文件元数据+时间戳·含已删,**可选**需 RawCopy) |
@@ -171,6 +171,37 @@
 ---
 
 ## 八、更新记录
+
+### 2026-08-02 · 解析矩阵配套:UAL + Amcache 加固 + 凭据库 + 远控日志
+
+**背景**:分析端解析矩阵补齐(ual / ie_webcache / browser_sqlite /
+amcache_hve / credstores / 远控日志族 / usn 七个解析器),采集端配套:
+
+1. **UAL(用户访问日志)** —— `LogFiles\Sum\*.mdb`(ESE),`esentutl /y` 绕锁;
+   客户端 SKU 无此目录,`_COLLECT_ERRORS.log` 记 NOTE 不算失败。
+2. **Amcache.hve 采集加固** —— 原仅 `robocopy /B` 单路,改 `esentutl /y` 优先 +
+   robocopy 兜底 + 失败/缺失均留痕(此前静默跳过)。
+3. **凭据库采集(每用户 `CredStore\`)** —— NetSarang(Xshell/Xftp 会话)、
+   MobaXterm(Documents + Roaming)、`WinSCP.ini`;顶层加
+   `Navicat.reg`(HKCU\Software\PremiumSoft,仅当前采集用户)。
+   **凭据材料,与 SAM 同级敏感。**
+4. **远控日志** —— 每用户补 RustDesk / SunloginClient 目录(AnyDesk/
+   TeamViewer/ToDesk 原有),镜像至 `RemoteAccess\` 系列目录。
+5. **浏览器(随 193f92b)** —— Chrome/Edge 全 profile 遍历 + IE WebCache。
+
+### 2026-08-02 · 新增 UAL 采集;浏览器采集升级(全 profile + IE)
+
+**背景**:近期实战复盘(分析端对账)发现两处可补强——
+
+1. **新增 UAL(用户访问日志)采集** —— `C:\Windows\System32\LogFiles\Sum\` 下的
+   `Current.mdb` / `SystemIdentity.mdb`(ESE,UALSVC 锁占用),复用 SRUM 同款的
+   `esentutl /y` 绕锁复制,连同 `*.jrs/*.log/*.chk` 一并落 `.\UAL\`。
+   UAL 是「谁访问过本机共享/会话」的权威账本(Server SKU 默认启用;客户端 SKU
+   无此目录,跳过并在 `_COLLECT_ERRORS.log` 记 NOTE,不算失败)。
+2. **浏览器采集升级** —— 原 Chrome/Edge 只采 `User Data\Default` 单 profile,
+   改为 `for /d` 遍历 `User Data\*` 全 profile(Chrome\%%~nxP / Edge\%%~nxP 分目录);
+   新增 **IE WebCache**(`WebCacheV01.dat`,ESE,同样走 `esentutl /y`)。
+   锁定文件仍由 `robocopy /B` 备份模式绕过(与 SRUDB/UsrClass 同款)。
 
 ### 2026-07-26 · 配套分析端:规范时区名、采集足迹自报告、wmic 弃用兜底
 

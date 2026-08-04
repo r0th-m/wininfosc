@@ -269,6 +269,12 @@ goto :MoreInfo
 :NT6
 ::for vista 7 8 8.1 10
 xcopy /e/h/c/i %SYSTEMROOT%\System32\winevt\Logs  .\Windows_logs\
+:: EVTX capacity snapshot: sizes + per-channel oldest record time
+call :fp "dir winevt Logs sizes -> evtx_sizes.txt"
+dir /a /-c "%SYSTEMROOT%\System32\winevt\Logs\*.evtx" > evtx_sizes.txt 2>nul || call :fail "dir evtx sizes"
+call :fp "powershell Get-WinEvent ListLog -> evtx_channel_stats.txt"
+powershell -NoProfile -Command "try { Get-WinEvent -ListLog * -ErrorAction SilentlyContinue | ForEach-Object { $oldest=''; try { $oldest=(Get-WinEvent -LogName $_.LogName -MaxEvents 1 -Oldest -ErrorAction Stop).TimeCreated.ToString('o') } catch {}; '{0}|Records={1}|Oldest={2}' -f $_.LogName, $_.RecordCount, $oldest } } catch { exit 1 }" > evtx_channel_stats.txt 2>nul
+if errorlevel 1 >> "%FAILLOG%" echo [%TIME%] NOTE PowerShell Get-WinEvent unavailable, only evtx_sizes.txt collected
 ::快捷键
 xcopy /e/h/c/i "%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations" .\JumpList\
 ::天擎日志(如有)
@@ -293,7 +299,16 @@ reg export  "HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\She
 call :fp "reg export  'HKLM\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings' REG_UserSettings.txt"
 reg export  "HKLM\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings" REG_UserSettings.txt
 ::Amcache.hve 常被系统占用 → robocopy 备份模式绕锁（与其它 hive 取法一致）
-robocopy "%SYSTEMROOT%\AppCompat\Programs" . Amcache.hve /B /COPY:DAT /R:0 /W:0 >nul 2>&1
+if exist "%SYSTEMROOT%\AppCompat\Programs\Amcache.hve" (
+    call :fp "esentutl /y AppCompat/Programs/Amcache.hve"
+    esentutl /y "%SYSTEMROOT%\AppCompat\Programs\Amcache.hve" /d .\Amcache.hve /o >nul 2>&1
+    if errorlevel 1 (
+        robocopy "%SYSTEMROOT%\AppCompat\Programs" . Amcache.hve /B /COPY:DAT /R:0 /W:0 >nul 2>&1
+        if not exist .\Amcache.hve call :fail "collect Amcache.hve"
+    )
+) else (
+    >> "%FAILLOG%" echo [%TIME%] NOTE Amcache.hve absent ^(old OS or disabled^), skip
+)
 
 :: ============================================================
 :: NT6新增 - RDP客户端遗留文件（当前用户）
@@ -373,6 +388,9 @@ call :fp "net user"
 net user > net_user.txt || call :fail "net user"
 call :fp "net user Administrator"
 net user Administrator >net_user_Administrator.txt || call :fail "net user Administrator"
+:: All local accounts detail incl LastPasswordSet (delims= keeps space-names)
+call :fp "net user all accounts detail -> net_user_all.txt"
+(for /f "delims=" %%u in ('net user ^| findstr /v /c:"命令成功完成" /c:"User accounts" /c:"----"') do @net user %%u) > net_user_all.txt 2>nul || call :fail "net user all accounts detail"
 ::如非域环境net view过于影响脚本性能，默认注释。
 ::net view > net_view.txt
 call :fp "cmdkey /l"
@@ -471,6 +489,28 @@ call :fp "reg save HKLM\SECURITY .\SECURITY /y"
 reg save HKLM\SECURITY .\SECURITY /y >nul 2>&1
 call :fp "reg save HKLM\SYSTEM .\SYSTEM /y"
 reg save HKLM\SYSTEM .\SYSTEM /y >nul 2>&1
+
+:: ============================================================
+:: UAL (User Access Log, ESE) - Server SKU default on.
+:: Same esentutl /y trick as SRUDB.dat. Skip w/ note if absent.
+:: ============================================================
+if exist "%SYSTEMROOT%\System32\LogFiles\Sum\Current.mdb" (
+    if not exist .\UAL md .\UAL
+    call :fp "esentutl /y LogFiles/Sum/Current.mdb -> UAL/"
+    esentutl /y "%SYSTEMROOT%\System32\LogFiles\Sum\Current.mdb" /d .\UAL\Current.mdb /o >nul 2>&1
+    if errorlevel 1 call :fail "esentutl UAL Current.mdb"
+    call :fp "esentutl /y LogFiles/Sum/SystemIdentity.mdb -> UAL/"
+    esentutl /y "%SYSTEMROOT%\System32\LogFiles\Sum\SystemIdentity.mdb" /d .\UAL\SystemIdentity.mdb /o >nul 2>&1
+    if errorlevel 1 call :fail "esentutl UAL SystemIdentity.mdb"
+    call :fp "xcopy LogFiles/Sum/* -> UAL/ (mdb/jrs/log/chk sidecar)"
+    xcopy /e/h/c/i "%SYSTEMROOT%\System32\LogFiles\Sum\*" .\UAL\ >nul 2>&1
+) else (
+    echo [!] UAL not present ^(non-Server SKU or UALSVC disabled^), skip
+    >> "%FAILLOG%" echo [%TIME%] NOTE UAL not present - skipped ^(non-Server SKU or UALSVC disabled^)
+)
+
+
+
 
 :: 判断Win7/2008系统
 for /f "tokens=1* delims=[" %%a in ('ver') do set b=%%b
@@ -577,10 +617,18 @@ for /d %%U in (C:\Users\*) do (
         xcopy /e/h/c/i "%%U\AppData\Roaming\TeamViewer" ".\Users\%%~nxU\RemoteAccess\TeamViewer" >nul 2>&1
         xcopy /e/h/c/i "%%U\AppData\Roaming\ToDesk" ".\Users\%%~nxU\RemoteAccess\ToDesk" >nul 2>&1
 
+        ::credential stores (NetSarang/MobaXterm/WinSCP) + RustDesk/Sunlogin
+        xcopy /e/h/c/i "%%U\Documents\NetSarang" ".\Users\%%~nxU\CredStore\NetSarang" >nul 2>&1
+        xcopy /e/h/c/i "%%U\Documents\MobaXterm" ".\Users\%%~nxU\CredStore\MobaXterm" >nul 2>&1
+        if exist "%%U\AppData\Roaming\WinSCP.ini" copy /y "%%U\AppData\Roaming\WinSCP.ini" ".\Users\%%~nxU\CredStore\" >nul 2>&1
+        if exist "%%U\AppData\Roaming\MobaXterm" xcopy /e/h/c/i "%%U\AppData\Roaming\MobaXterm" ".\Users\%%~nxU\CredStore\MobaXterm-roaming" >nul 2>&1
+        xcopy /e/h/c/i "%%U\AppData\Roaming\RustDesk" ".\Users\%%~nxU\RemoteAccess\RustDesk" >nul 2>&1
+        xcopy /e/h/c/i "%%U\AppData\Roaming\SunloginClient" ".\Users\%%~nxU\RemoteAccess\SunloginClient" >nul 2>&1
         ::浏览器历史文件（robocopy备份模式可绕过浏览器锁定）
-        robocopy "%%U\AppData\Local\Google\Chrome\User Data\Default" ".\Users\%%~nxU\Browser\Chrome" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
-        robocopy "%%U\AppData\Local\Microsoft\Edge\User Data\Default" ".\Users\%%~nxU\Browser\Edge" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
+        for /d %%P in ("%%U\AppData\Local\Google\Chrome\User Data\*") do robocopy "%%P" ".\Users\%%~nxU\Browser\Chrome\%%~nxP" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
+        for /d %%P in ("%%U\AppData\Local\Microsoft\Edge\User Data\*") do robocopy "%%P" ".\Users\%%~nxU\Browser\Edge\%%~nxP" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
         xcopy /e/h/c/i "%%U\AppData\Roaming\Mozilla\Firefox\Profiles" ".\Users\%%~nxU\Browser\Firefox\" >nul 2>&1
+        if exist "%%U\AppData\Local\Microsoft\Windows\WebCache\WebCacheV01.dat" esentutl /y "%%U\AppData\Local\Microsoft\Windows\WebCache\WebCacheV01.dat" /d ".\Users\%%~nxU\Browser\IE\WebCacheV01.dat" /o >nul 2>&1
 
         ::UsrClass.dat Shellbags（已删除文件夹的访问记录仍留存）
         robocopy "%%U\AppData\Local\Microsoft\Windows" ".\Users\%%~nxU\ShellBags" UsrClass.dat /B /COPY:DAT /R:0 /W:0 >nul 2>&1
@@ -611,6 +659,11 @@ for /d %%U in (C:\Users\*) do (
 :: 须在所有采集动作之后、目录不再变动时执行。
 :: ============================================================
 echo.
+:: Navicat saved connections (HKCU, current collecting user only)
+call :fp "reg export HKCU/Software/PremiumSoft Navicat.reg"
+reg export "HKCU\Software\PremiumSoft" Navicat.reg >nul 2>&1
+if errorlevel 1 >> "%FAILLOG%" echo [%TIME%] NOTE no HKCU PremiumSoft ^(no Navicat^), skip
+
 echo [*] Computing SHA256 chain-of-custody manifest...please wait
 set "MANIFEST=_HASH_MANIFEST.txt"
 > "%MANIFEST%" echo WinInfoSC Forensic Collection - SHA256 Manifest
@@ -655,6 +708,7 @@ exit /b 0
 :: ============================================================
 :: 子程序：记录一条命令失败（由 "命令 || call :fail 标签" 触发）
 :: ============================================================
+
 :fail
 >> "%FAILLOG%" echo [%TIME%] FAIL (exit=%errorlevel%) %~1
 exit /b 0
