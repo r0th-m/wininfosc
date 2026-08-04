@@ -624,6 +624,8 @@ for /d %%U in (C:\Users\*) do (
         if exist "%%U\AppData\Roaming\MobaXterm" xcopy /e/h/c/i "%%U\AppData\Roaming\MobaXterm" ".\Users\%%~nxU\CredStore\MobaXterm-roaming" >nul 2>&1
         xcopy /e/h/c/i "%%U\AppData\Roaming\RustDesk" ".\Users\%%~nxU\RemoteAccess\RustDesk" >nul 2>&1
         xcopy /e/h/c/i "%%U\AppData\Roaming\SunloginClient" ".\Users\%%~nxU\RemoteAccess\SunloginClient" >nul 2>&1
+        :: Sunlogin real log home (verified 2026-08-04): %APPDATA%\Oray\{AweSun,SunloginClient}
+        xcopy /e/h/c/i "%%U\AppData\Roaming\Oray" ".\Users\%%~nxU\RemoteAccess\Oray" >nul 2>&1
         ::浏览器历史文件（robocopy备份模式可绕过浏览器锁定）
         for /d %%P in ("%%U\AppData\Local\Google\Chrome\User Data\*") do robocopy "%%P" ".\Users\%%~nxU\Browser\Chrome\%%~nxP" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
         for /d %%P in ("%%U\AppData\Local\Microsoft\Edge\User Data\*") do robocopy "%%P" ".\Users\%%~nxU\Browser\Edge\%%~nxP" History Cookies "Login Data" Downloads /B /COPY:DAT /R:0 /W:0 >nul 2>&1
