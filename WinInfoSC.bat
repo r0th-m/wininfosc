@@ -4,7 +4,7 @@ color 0b
 echo.
 echo                       W I N I N F O S C
 echo              Windows Host Forensic Collector
-echo                           by ymher
+echo                           by ye-mengwen
 echo.
 echo ***************************************************************
 echo.
