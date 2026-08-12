@@ -54,7 +54,7 @@
 |----|---------|
 | **系统与进程** | `systeminfo`、环境变量、进程列表(`tasklist /V`)、服务(`tasklist /SVC`)、驱动列表、已装补丁(`qfe`)、WMIC 进程/账户/登录 |
 | **网络状态** | `ipconfig /all`、DNS 缓存、`netstat`(全连接 + ESTABLISHED)、共享/会话/连接(`net share/session/use`)、`arp`、`nbtstat`、路由表、`hosts`、防火墙规则、portproxy 端口转发 |
-| **持久化机制** | 注册表 Run 键(HKLM/HKCU)、Winlogon、AppInit_DLLs、BootExecute、LSA、COM 劫持、IFEO、BHO、ShellExecuteHooks、Services(三套 ControlSet)、计划任务(`Tasks\` + `schtasks`)、启动目录、**WMI 事件订阅**(无文件后门核心) |
+| **持久化机制** | 注册表 Run 键(HKLM/HKCU)、Winlogon、AppInit_DLLs、BootExecute、LSA、COM 劫持、IFEO、BHO、ShellExecuteHooks、Services(三套 ControlSet)、计划任务(`Tasks\` + `schtasks`)、启动目录、**WMI 事件订阅**(无文件后门核心)、**Shell 扩展/右键菜单链**(ContextMenuHandlers 三 hive + Approved/Blocked + Classes 全类枚举)、**Native Messaging Hosts**(Chrome/Edge/Firefox)、**浏览器扩展策略**(Forcelist 强制扩展/ExtensionSettings)、**文件关联残留**(FileExts 全量:UserChoice/OpenWith)、**驻留项二进制签名对账**(`signatures.csv`,Authenticode 状态) |
 | **执行痕迹** | Prefetch、**Amcache.hve**、BAM、ShimCache、UserAssist、MuiCache、RecentDocs、RunMRU、JumpList |
 | **日志** | Windows 事件日志(NT6 `.evtx` / NT5 `.evt`)、防火墙日志、Netlogon 日志、360/天擎日志、IIS 日志、ScreenOn |
 | **用户活动** | Recent、**Windows Timeline**(ActivitiesCache)、**PowerShell 历史**、浏览器(Chrome/Edge **全部 profile** 的 History/Cookies/Login Data/Downloads、Firefox、**IE WebCache**)、**ShellBags**(UsrClass.dat) |
@@ -110,6 +110,7 @@
 |------|------|
 | `Everything-x64.exe` / `Everything-x86.exe` | 全盘文件清单引擎;bat 按 CPU 架构**自动选**(64 位/WOW64/ARM64 用 x64,否则 x86) |
 | `es.exe` | Everything 命令行客户端,导出 `everything.efu` 全盘清单 |
+| `collect_ext.ps1` | 驻留面扩展采集(自研,只读):Classes 全类 shellex 枚举 + 签名对账;与 bat 同目录即被自动调用,**PS 2.0+(Win7/2008R2 起)兼容,XP 静默跳过** |
 
 - Everything 用**独立命名实例**(`Forensic`)+ 不落库(`-nodb`)后台建索引,导出后即退出,**尽量减少留痕**。
 - **缺 Everything 不影响主采集**:脚本自动跳过该步、**不记为失败**。
@@ -171,6 +172,20 @@
 ---
 
 ## 八、更新记录
+
+### 2026-08-11 · 驻留面扩展四面 + 签名对账(借鉴 RogueCleaner 覆盖面对账)
+
+- 新增:**Shell 扩展/右键菜单链**(ContextMenuHandlers HKLM/HKCU/WOW64 +
+  Shell Extensions Approved/Blocked + Directory/Folder/Drive shellex +
+  Classes 全类通配枚举)、**Native Messaging Hosts**、**浏览器扩展策略**、
+  **FileExts 文件关联残留**——恶意软件常用的四个驻留/劫持面;
+- 新增 `collect_ext.ps1`(随包):服务/Run/RunOnce 驻留项二进制的
+  Authenticode 签名状态+签名者对账(`signatures.csv`),未签名/失配即异常;
+- 兼容:reg 导出面全 Windows 通用;ps1 兼容 **PowerShell 2.0+**
+  (Win7/2008R2 起),XP/2003 无 PowerShell 静默跳过,主流程不受影响;
+- 工程教训(记档):PS 提供程序通配遍历 Classes 键会分钟级卡死→Win32
+  Registry API 直读(本机 4.5s);ps1 须带 BOM(PS5.1 无 BOM 按 GBK 误读);
+  CSV 引号翻倍(签名者主题内嵌引号实测撞线)。
 
 ### 2026-08-02 · 解析矩阵配套:UAL + Amcache 加固 + 凭据库 + 远控日志
 
