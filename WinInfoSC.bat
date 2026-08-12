@@ -247,6 +247,40 @@ call :fp "reg export  'HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions'  REG
 reg export  "HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions"  REG_DefenderExclusions.txt 2>nul
 call :fp "reg export  'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender'     REG_DefenderPolicy.txt"
 reg export  "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender"     REG_DefenderPolicy.txt 2>nul
+:: ============================================================
+:: 驻留面扩展(2026-08-11, 对账 RogueCleaner 覆盖面):
+:: Shell 扩展链/Native Messaging/浏览器扩展策略/文件关联 + 签名对账
+:: ============================================================
+call :fp "Shell 扩展/右键菜单链(ContextMenuHandlers/ShellExtensions/shellex)"
+reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ContextMenuHandlers" REG_ContextMenuHandlers_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ContextMenuHandlers" REG_ContextMenuHandlers_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Explorer\ContextMenuHandlers" REG_ContextMenuHandlers_WOW64.txt 2>nul
+reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions" REG_ShellExtensions_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions" REG_ShellExtensions_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers" REG_Shellex_DirBackground.txt 2>nul
+reg export "HKLM\SOFTWARE\Classes\Directory\shellex\ContextMenuHandlers" REG_Shellex_Directory.txt 2>nul
+reg export "HKLM\SOFTWARE\Classes\Folder\shellex\ContextMenuHandlers" REG_Shellex_Folder.txt 2>nul
+reg export "HKLM\SOFTWARE\Classes\Drive\shellex\ContextMenuHandlers" REG_Shellex_Drive.txt 2>nul
+call :fp "Native Messaging Hosts(Chrome/Edge/Firefox)"
+reg export "HKLM\SOFTWARE\Google\Chrome\NativeMessagingHosts" REG_NMH_Chrome_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Google\Chrome\NativeMessagingHosts" REG_NMH_Chrome_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\WOW6432Node\Google\Chrome\NativeMessagingHosts" REG_NMH_Chrome_WOW64.txt 2>nul
+reg export "HKLM\SOFTWARE\Microsoft\Edge\NativeMessagingHosts" REG_NMH_Edge_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Microsoft\Edge\NativeMessagingHosts" REG_NMH_Edge_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\Mozilla\NativeMessagingHosts" REG_NMH_Firefox_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Mozilla\NativeMessagingHosts" REG_NMH_Firefox_HKCU.txt 2>nul
+call :fp "浏览器扩展策略(ExtensionForcelist/ExtensionSettings/Firefox Policies)"
+reg export "HKLM\SOFTWARE\Policies\Google\Chrome" REG_ExtPolicy_Chrome_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Policies\Google\Chrome" REG_ExtPolicy_Chrome_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\Policies\Microsoft\Edge" REG_ExtPolicy_Edge_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Policies\Microsoft\Edge" REG_ExtPolicy_Edge_HKCU.txt 2>nul
+reg export "HKLM\SOFTWARE\Policies\Mozilla\Firefox" REG_ExtPolicy_Firefox_HKLM.txt 2>nul
+reg export "HKCU\SOFTWARE\Policies\Mozilla\Firefox" REG_ExtPolicy_Firefox_HKCU.txt 2>nul
+call :fp "文件关联(FileExts 全量: UserChoice/OpenWith 残留)"
+reg export "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts" REG_FileExts.txt 2>nul
+call :fp "签名对账+shellex通配枚举(collect_ext.ps1 → signatures.csv/REG_Shellex_ClassesAll.txt)"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect_ext.ps1" 2>nul
+
 
 md Windows_logs
 ::判断系统版本,根据系统版本获取日志及最近访问文件
