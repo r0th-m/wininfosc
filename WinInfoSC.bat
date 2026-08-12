@@ -279,7 +279,7 @@ reg export "HKCU\SOFTWARE\Policies\Mozilla\Firefox" REG_ExtPolicy_Firefox_HKCU.t
 call :fp "文件关联(FileExts 全量: UserChoice/OpenWith 残留)"
 reg export "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts" REG_FileExts.txt 2>nul
 call :fp "签名对账+shellex通配枚举(collect_ext.ps1 → signatures.csv/REG_Shellex_ClassesAll.txt)"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect_ext.ps1" 2>nul
+if exist "%~dp0collect_ext.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect_ext.ps1" 2>nul
 
 
 md Windows_logs

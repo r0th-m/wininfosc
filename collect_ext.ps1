@@ -3,12 +3,13 @@
 # ② 驻留项二进制 Authenticode 签名对账(services ImagePath + Run/RunOnce)
 # 输出到当前目录: REG_Shellex_ClassesAll.txt / signatures.csv
 # 只读,零修改;任何单项失败不拖垮整体(尽力而为,缺口如实落 _COLLECT_ERRORS 由主脚本管)。
+# 兼容:PowerShell 2.0+(Win7/2008R2 起,含 Win10/11/Server 全系);XP/2003 无 PowerShell,主脚本静默跳过。
 $ErrorActionPreference = 'SilentlyContinue'
 
 # ---- ① shellex ContextMenuHandlers 全类通配枚举 ----
 # 教训(2026-08-11 实测):PS 提供程序通配 Get-ChildItem 'HKLM:\SOFTWARE\Classes\*'
 # 会遍历整个 Classes 键(数万子键),卡死分钟级;改 Win32 Registry API 直读,秒级。
-$out = [System.Collections.Generic.List[string]]::new()
+$out = New-Object 'System.Collections.Generic.List[string]'   # PS2.0 兼容(Win7/2008R2 自带 PS2.0 无 ::new)
 $classes = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Classes')
 if ($null -ne $classes) {
     foreach ($progid in $classes.GetSubKeyNames()) {
