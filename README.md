@@ -173,6 +173,18 @@
 
 ## 八、更新记录
 
+### 2026-08-14 · Windows 7(cmd 6.1)兼容修复
+
+- **「此时不应有do」修复**:`for /f` 空 options 改标准 `"delims="` 写法
+  (cmd 6.1 容错低于 10.0 的 parse 错误头号嫌疑);清单生成的**嵌套 FOR**
+  (for/r 套 if 套 for/f 括号块)改走 PowerShell .NET SHA256——PS2.0 即有,
+  Win7 自带,且不再逐文件起 certutil 进程(顺带提速);
+- **tzutil 兼容**:tzutil 为 Win8+ 才有,Win7 自动降级为注册表
+  `TimeZoneKeyName` 兜底(`where` 预检,优雅降级不记失败);
+- 其余 Win7 兼容面已核:Everything/RawCopy/esentutl/wevtutil/fsutil/
+  certutil 均在;`collect_ext.ps1` 兼容 PowerShell 2.0;
+- **兼容承诺**:现役 Windows(Win7 SP1 / 2008R2 起)全兼容,XP/2003 优雅降级。
+
 ### 2026-08-11 · 驻留面扩展四面 + 签名对账(借鉴 RogueCleaner 覆盖面对账)
 
 - 新增:**Shell 扩展/右键菜单链**(ContextMenuHandlers HKLM/HKCU/WOW64 +
