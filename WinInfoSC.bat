@@ -75,7 +75,7 @@ goto :cha
 :cha
 if "%IP%"=="" (set IP=noip)
 :: GetNAME
-for /f "" %%i in ('hostname') do (
+for /f "delims=" %%i in ('hostname') do (
 set NAME=%%i
 goto :chd
 )
@@ -115,6 +115,10 @@ w32tm /tz >> _COLLECTION_TIME.txt 2>nul
 :: w32tm /tz 在无夏令时规则的时区会报 TIME_ZONE_ID_UNKNOWN，补 tzutil /g 输出规范时区名（如 China Standard Time）
 call :fp "tzutil /g"
 for /f "delims=" %%Z in ('tzutil /g 2^>nul') do >> _COLLECTION_TIME.txt echo tzutil /g: %%Z
+:: Win7(6.1) 无 tzutil,注册表兜底时区名(老机优雅降级,不记失败)
+if errorlevel 1 (
+  for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v TimeZoneKeyName 2^>/dev/null ^| findstr TimeZoneKeyName') do >> _COLLECTION_TIME.txt echo tz_keyname: %%B
+)
 call :fp "tasklist /V /FO CSV"
 tasklist /V /FO CSV > tasklist_process.csv || call :fail "tasklist /V"
 call :fp "tasklist /SVC /FO CSV"
@@ -706,17 +710,12 @@ set "MANIFEST=_HASH_MANIFEST.txt"
 >> "%MANIFEST%" echo Host=%NAME% IP=%IP% Generated=%DATE% %TIME%
 >> "%MANIFEST%" echo ================================================
 :: 足迹：certutil 批量固证只记一条汇总（逐文件明细即本清单）
+:: manifest via PowerShell .NET SHA256 (Win7 cmd 6.1 nested-FOR "do was unexpected" workaround)
 set "FPCOUNT=0"
 for /r %%F in (*) do set /a FPCOUNT+=1
-call :fp "certutil -hashfile 批量固证 %FPCOUNT% 个文件 （逐文件SHA256明细见 _HASH_MANIFEST.txt）"
-for /r %%F in (*) do (
-    if /I not "%%~nxF"=="%MANIFEST%" (
-        for /f "delims=" %%H in ('certutil -hashfile "%%F" SHA256 ^| findstr /v ":"') do (
-            >> "%MANIFEST%" echo %%H  %%~fF
-        )
-    )
-)
-:: 清单根哈希（单一完整性锚点）
+call :fp "manifest(PS .NET SHA256) %FPCOUNT% files"
+set "MNAME=_HASH_MANIFEST.txt"
+powershell -NoProfile -Command "$sha=[System.Security.Cryptography.SHA256]::Create(); Get-ChildItem -Recurse -File | Where-Object { $_.Name -ne $env:MNAME } | ForEach-Object { $fs=[System.IO.File]::OpenRead($_.FullName); $h=($sha.ComputeHash($fs) | ForEach-Object { $_.ToString('x2') }) -join ''; $fs.Close(); ($h.ToLower() + '  ' + $_.FullName) }" >> "%MANIFEST%" 2>nul
 for /f "delims=" %%R in ('certutil -hashfile "%MANIFEST%" SHA256 ^| findstr /v ":"') do set "ROOT=%%R"
 >> "%MANIFEST%" echo ================================================
 >> "%MANIFEST%" echo MANIFEST_ROOT_SHA256=%ROOT%
