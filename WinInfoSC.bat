@@ -114,10 +114,12 @@ call :fp "w32tm /tz"
 w32tm /tz >> _COLLECTION_TIME.txt 2>nul
 :: w32tm /tz 在无夏令时规则的时区会报 TIME_ZONE_ID_UNKNOWN，补 tzutil /g 输出规范时区名（如 China Standard Time）
 call :fp "tzutil /g"
-for /f "delims=" %%Z in ('tzutil /g 2^>nul') do >> _COLLECTION_TIME.txt echo tzutil /g: %%Z
-:: Win7(6.1) 无 tzutil,注册表兜底时区名(老机优雅降级,不记失败)
+where tzutil >/dev/null 2>nul
 if errorlevel 1 (
-  for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v TimeZoneKeyName 2^>/dev/null ^| findstr TimeZoneKeyName') do >> _COLLECTION_TIME.txt echo tz_keyname: %%B
+  :: Win7(6.1) 无 tzutil,注册表兜底(优雅降级,不记失败)
+  for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v TimeZoneKeyName 2^>nul ^| findstr TimeZoneKeyName') do >> _COLLECTION_TIME.txt echo tz_keyname: %%B
+) else (
+  for /f "delims=" %%Z in ('tzutil /g 2^>nul') do >> _COLLECTION_TIME.txt echo tzutil /g: %%Z
 )
 call :fp "tasklist /V /FO CSV"
 tasklist /V /FO CSV > tasklist_process.csv || call :fail "tasklist /V"
