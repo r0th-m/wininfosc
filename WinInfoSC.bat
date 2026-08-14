@@ -114,7 +114,7 @@ call :fp "w32tm /tz"
 w32tm /tz >> _COLLECTION_TIME.txt 2>nul
 :: w32tm /tz 在无夏令时规则的时区会报 TIME_ZONE_ID_UNKNOWN，补 tzutil /g 输出规范时区名（如 China Standard Time）
 call :fp "tzutil /g"
-where tzutil >/dev/null 2>nul
+where tzutil >nul 2>nul
 if errorlevel 1 (
   :: Win7(6.1) 无 tzutil,注册表兜底(优雅降级,不记失败)
   for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v TimeZoneKeyName 2^>nul ^| findstr TimeZoneKeyName') do >> _COLLECTION_TIME.txt echo tz_keyname: %%B
