@@ -429,8 +429,15 @@ net user > net_user.txt || call :fail "net user"
 call :fp "net user Administrator"
 net user Administrator >net_user_Administrator.txt || call :fail "net user Administrator"
 :: All local accounts detail incl LastPasswordSet (delims= keeps space-names)
-call :fp "net user all accounts detail -> net_user_all.txt"
-(for /f "delims=" %%u in ('net user ^| findstr /v /c:"命令成功完成" /c:"User accounts" /c:"----"') do @net user %%u) > net_user_all.txt 2>nul || call :fail "net user all accounts detail"
+:: All local accounts detail: 优先 PS Get-LocalUser(与系统语言无关, 中文/英文系统通吃);
+:: 无 Get-LocalUser 的环境(Win7 PS2)退化为 wmic useraccount list full(字段等价, 组归属另见 net localgroup)
+call :fp "Get-LocalUser all accounts detail -> net_user_all.txt"
+powershell -NoProfile -Command "Get-LocalUser | Format-List Name,Enabled,Description,FullName,LastLogon,PasswordExpires,PasswordLastSet,PasswordRequired,UserMayChangePassword,SID,PrincipalSource" > net_user_all.txt 2>nul
+findstr /m /c:"Enabled" net_user_all.txt >nul 2>&1
+if errorlevel 1 (
+  call :fp "wmic useraccount (无 PS5.1 退化) -> net_user_all.txt"
+  wmic useraccount list full /format:list > net_user_all.txt 2>nul || call :fail "local accounts detail"
+)
 ::如非域环境net view过于影响脚本性能，默认注释。
 ::net view > net_view.txt
 call :fp "cmdkey /l"
