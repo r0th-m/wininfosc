@@ -1,2 +1,5 @@
 *.bat -text
 *.cmd -text
+*.ps1 -text
+# bat/cmd 必须 GBK 编码 + CRLF 行尾(cmd.exe 硬性要求), -text 禁止 git 做任何转换;
+# 写入/编辑后必须 od 验证字节, 不许信编辑器状态栏.
