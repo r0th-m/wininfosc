@@ -38,10 +38,16 @@ echo.
 :: ============================================================
 :: Everything 全盘文件清单导出（可选增强）
 :: 采集包需与 bat 同目录随包带: Everything-x64.exe + Everything-x86.exe + es.exe (voidtools 官方便携版)
-:: 流程: 按 CPU 架构选 exe → 独立命名实例(Forensic·实例级隔离)后台建索引 →
-::       es.exe -timeout 等索引就绪后导出全盘 efu → 退出该实例(减少留痕)。
-:: 缺工具→跳过(不算失败); 带齐却导出失败→记 FAIL。
+:: 流程: 快路径(用户已开默认实例且索引就绪→秒级导出) → 便携独立实例建索引导出 → 缺工具/失败跳过
+:: 用法: WinInfoSC.bat /lite 跳过本段(大磁盘服务器建索引 I/O 太重, Server2016 实测卡死)
 :: ============================================================
+set "SKIP_EFU="
+if /I "%~1"=="/lite" set "SKIP_EFU=1"
+if /I "%~1"=="lite" set "SKIP_EFU=1"
+if defined SKIP_EFU (
+    echo [*] lite 模式: 跳过 Everything 全盘索引与 efu 导出
+    goto :efu_end
+)
 :: 按 CPU 架构选择 Everything 便携版(默认 x86 兜底老系统; 64 位系统用 x64)
 set "EVERYTHING_EXE=Everything-x86.exe"
 if /I "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "EVERYTHING_EXE=Everything-x64.exe"
@@ -49,7 +55,19 @@ if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "EVERYTHING_EXE=Everything-x64.exe
 if defined PROCESSOR_ARCHITEW6432 set "EVERYTHING_EXE=Everything-x64.exe"
 if exist "%~dp0es.exe" (
     if exist "%~dp0%EVERYTHING_EXE%" (
+        :: 快路径: 默认实例已就绪(用户提前打开 Everything 且索引建完)则直接导出
+        call :fp "es.exe -export-efu everything.efu (默认实例快路径)"
+        "%~dp0es.exe" -timeout 20000 -export-efu "%~dp0everything.efu" >nul 2>&1
+        :: 快路径可能产出空文件(实例在但 IPC/索引异常), 必须验大小; 空则删掉回退便携实例
+        set "EFU_OK="
+        if exist "%~dp0everything.efu" for %%F in ("%~dp0everything.efu") do if %%~zF GTR 0 set "EFU_OK=1"
+        if defined EFU_OK (
+            echo [*] Everything: 默认实例 efu 导出完成(快路径, 未新建索引)
+            goto :efu_end
+        )
+        del /q "%~dp0everything.efu" >nul 2>&1
         echo [*] Everything: building portable index [instance=Forensic], please wait...
+        echo     大磁盘此步可能很久; 可用 WinInfoSC.bat /lite 跳过
         call :fp "%EVERYTHING_EXE% -instance Forensic （建立便携索引）"
         start "" "%~dp0%EVERYTHING_EXE%" -instance Forensic
         :: 等命名实例启动+建索引就绪(否则 es.exe 报 Error 8: IPC window not found)
@@ -57,12 +75,15 @@ if exist "%~dp0es.exe" (
         call :fp "es.exe -instance Forensic -export-efu everything.efu"
         "%~dp0es.exe" -instance Forensic -timeout 120000 -export-efu "%~dp0everything.efu" || set "ES_FAILED=1"
         "%~dp0%EVERYTHING_EXE%" -instance Forensic -exit >nul 2>&1
+        :: 守护: 强杀可能残留的 Forensic 实例(防服务器上僵尸索引进程持续吃 I/O)
+        taskkill /F /IM "%EVERYTHING_EXE%" /FI "WINDOWTITLE eq Forensic*" >nul 2>&1
         :: 采完删掉 Everything 生成的库/配置(补回"减留痕")
         del /q "%APPDATA%\Everything\*Forensic*" >nul 2>&1
     ) else (
         echo [!] 缺 %EVERYTHING_EXE%, 跳过 efu 全盘清单导出 ^(需与 es.exe 同目录^)
     )
 )
+:efu_end
 md "%~dp0Forensic"
 pushd "%~dp0Forensic"
 
