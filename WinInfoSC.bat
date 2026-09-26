@@ -24,6 +24,17 @@ if '%errorlevel%' NEQ '0' (
 setlocal enabledelayedexpansion
 
 :: ============================================================
+:: 参数: -Hash / --hash  严格档(采集时逐文件 SHA256 + 清单根哈希,
+:: 出正式证据场景用); 默认不带 = 不逐文件哈希(现场逐文件 SHA256 卡死
+:: 病根), 完整性哈希由分析平台入库时计算。可与 /lite 同用(/lite 在前)。
+:: ============================================================
+set "HASH_MODE="
+if /I "%~1"=="-Hash" set "HASH_MODE=1"
+if /I "%~1"=="--hash" set "HASH_MODE=1"
+if /I "%~2"=="-Hash" set "HASH_MODE=1"
+if /I "%~2"=="--hash" set "HASH_MODE=1"
+
+:: ============================================================
 :: 采集端足迹自报告：记录采集过程执行的关键外部命令（时间<TAB>命令行，本地时间）
 :: 供分析端 collector footprint 标注优先消费；先写 bat 同目录，建好输出目录后移入（与 _HASH_MANIFEST.txt 同级）
 :: certutil 批量固证属固证动作非排查命令，只记一条汇总（明细见 _HASH_MANIFEST.txt），不逐条记录
@@ -724,9 +735,13 @@ for /d %%U in (C:\Users\*) do (
 )
 
 :: ============================================================
-:: 固证 chain-of-custody：对全部产物逐文件 SHA256 + 清单 + 清单根哈希
-:: 用内置 certutil（NT6 全版本自带，无外部依赖）；任何文件改动→其哈希变→清单变→根哈希变。
-:: 须在所有采集动作之后、目录不再变动时执行。
+:: 固证 manifest 两档(2026-09-26 起, 哈希计算挪到分析平台):
+::   默认档  不逐文件哈希(现场逐文件 SHA256 卡死病根已切到平台侧),
+::           只写「采集时未哈希」声明; 完整性哈希由分析平台入库时计算,
+::           采集→入库区间的保管责任归采集人。
+::   严格档  WinInfoSC.bat -Hash(--hash 同义): 维持原逐文件 SHA256 +
+::           清单根哈希(certutil), 出正式证据场景用。
+:: 必须在所有采集动作之后、目录不再变动时执行。
 :: ============================================================
 echo.
 :: Navicat saved connections (HKCU, current collecting user only)
@@ -734,8 +749,26 @@ call :fp "reg export HKCU/Software/PremiumSoft Navicat.reg"
 reg export "HKCU\Software\PremiumSoft" Navicat.reg >nul 2>&1
 if errorlevel 1 >> "%FAILLOG%" echo [%TIME%] NOTE no HKCU PremiumSoft ^(no Navicat^), skip
 
-echo [*] Computing SHA256 chain-of-custody manifest...please wait
 set "MANIFEST=_HASH_MANIFEST.txt"
+if defined HASH_MODE goto :manifest_strict
+
+echo [*] Writing integrity manifest ^(default: NOT hashed at collection^)...
+> "%MANIFEST%" echo WinInfoSC Forensic Collection - Integrity Manifest
+>> "%MANIFEST%" echo Host=%NAME% IP=%IP% Generated=%DATE% %TIME%
+>> "%MANIFEST%" echo Mode=DEFAULT_NO_HASH
+>> "%MANIFEST%" echo ================================================
+>> "%MANIFEST%" echo [NOT HASHED AT COLLECTION TIME - default mode]
+>> "%MANIFEST%" echo File integrity SHA256 is computed by the analysis platform at ingest.
+>> "%MANIFEST%" echo Custody between collection and ingest is the collector's responsibility.
+>> "%MANIFEST%" echo For per-file SHA256 at collection time rerun with: WinInfoSC.bat -Hash
+>> "%MANIFEST%" echo 采集时未哈希(默认档); 文件完整性哈希由分析平台入库时计算;
+>> "%MANIFEST%" echo 采集→入库区间的保管责任归采集人。需采集时刻指纹请用 -Hash 严格档。
+call :fp "manifest(default) not hashed at collection; platform hashes at ingest"
+set "ROOT="
+goto :manifest_done
+
+:manifest_strict
+echo [*] Computing SHA256 chain-of-custody manifest...please wait
 > "%MANIFEST%" echo WinInfoSC Forensic Collection - SHA256 Manifest
 >> "%MANIFEST%" echo Host=%NAME% IP=%IP% Generated=%DATE% %TIME%
 >> "%MANIFEST%" echo ================================================
@@ -750,11 +783,17 @@ for /f "delims=" %%R in ('certutil -hashfile "%MANIFEST%" SHA256 ^| findstr /v "
 >> "%MANIFEST%" echo ================================================
 >> "%MANIFEST%" echo MANIFEST_ROOT_SHA256=%ROOT%
 
+:manifest_done
+
 cls
 echo.
 echo.
 echo [*] Info gathering Finished.
-echo [*] Chain-of-custody manifest: %MANIFEST%  (root SHA256=%ROOT%)
+if defined HASH_MODE (
+    echo [*] Chain-of-custody manifest: %MANIFEST%  ^(root SHA256=%ROOT%^)
+) else (
+    echo [*] Integrity manifest: %MANIFEST%  ^(default: not hashed at collection; platform hashes at ingest^)
+)
 :: 统计失败命令数（"] FAIL " 仅匹配 :fail 子程序写入的记录行，不含日志头部）
 set "FAILCOUNT=0"
 for /f %%C in ('findstr /C:"] FAIL " "%FAILLOG%" 2^>nul ^| find /c /v ""') do set "FAILCOUNT=%%C"
